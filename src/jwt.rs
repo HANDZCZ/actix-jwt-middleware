@@ -20,6 +20,8 @@ pub struct JwtMiddleware<T> {
     validation: Arc<Validation>,
     #[allow(clippy::type_complexity)]
     err_handler: Option<Arc<dyn Fn(JwtDecodeErrors) -> Error + Send + Sync>>,
+    #[allow(clippy::type_complexity)]
+    success_handler: Option<Arc<dyn Fn(&mut ServiceRequest, T) + Send + Sync>>,
     _token_data_type: PhantomData<T>,
 }
 
@@ -29,6 +31,7 @@ impl<T> JwtMiddleware<T> {
             decoding_key: Arc::new(decoding_key),
             validation: Arc::new(validation),
             err_handler: None,
+            success_handler: None,
             _token_data_type: PhantomData,
         }
     }
@@ -38,6 +41,14 @@ impl<T> JwtMiddleware<T> {
         F: Fn(JwtDecodeErrors) -> Error + Send + Sync + 'static,
     {
         self.err_handler = Some(Arc::new(f));
+        self
+    }
+
+    pub fn success_handler<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&mut ServiceRequest, T) + Send + Sync + 'static,
+    {
+        self.success_handler = Some(Arc::new(f));
         self
     }
 }
@@ -61,6 +72,7 @@ where
             decoding_key: self.decoding_key.clone(),
             validation: self.validation.clone(),
             err_handler: self.err_handler.clone(),
+            success_handler: self.success_handler.clone(),
             _token_data_type: PhantomData,
         }))
     }
@@ -72,6 +84,8 @@ pub struct JwtService<S, T> {
     validation: Arc<Validation>,
     #[allow(clippy::type_complexity)]
     err_handler: Option<Arc<dyn Fn(JwtDecodeErrors) -> Error + Send + Sync>>,
+    #[allow(clippy::type_complexity)]
+    success_handler: Option<Arc<dyn Fn(&mut ServiceRequest, T) + Send + Sync>>,
     _token_data_type: PhantomData<T>,
 }
 
@@ -124,14 +138,18 @@ where
 
     forward_ready!(service);
 
-    fn call(&self, req: ServiceRequest) -> Self::Future {
+    fn call(&self, mut req: ServiceRequest) -> Self::Future {
         let auth_header_value = req.headers().get(header::AUTHORIZATION).cloned();
 
         if let Some(auth_header_value) = auth_header_value {
             let claims = decode_jwt::<T>(&auth_header_value, &self.decoding_key, &self.validation);
             match claims {
                 Ok(token_data) => {
-                    req.extensions_mut().insert(token_data);
+                    if let Some(success_handler) = self.success_handler.clone() {
+                        (success_handler)(&mut req, token_data);
+                    } else {
+                        req.extensions_mut().insert(token_data);
+                    }
                 }
                 Err(e) => {
                     return Box::pin(ready(Ok(req
