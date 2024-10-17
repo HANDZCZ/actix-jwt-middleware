@@ -25,6 +25,18 @@ pub struct JwtMiddleware<T> {
     _token_data_type: PhantomData<T>,
 }
 
+impl<T> Clone for JwtMiddleware<T> {
+    fn clone(&self) -> Self {
+        Self {
+            decoding_key: self.decoding_key.clone(),
+            validation: self.validation.clone(),
+            err_handler: self.err_handler.clone(),
+            success_handler: self.success_handler.clone(),
+            _token_data_type: PhantomData,
+        }
+    }
+}
+
 impl<T> JwtMiddleware<T> {
     pub fn new(decoding_key: DecodingKey, validation: Validation) -> Self {
         Self {
